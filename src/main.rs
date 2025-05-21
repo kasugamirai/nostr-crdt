@@ -1,84 +1,11 @@
-use nostr_crdt::nostr::crdt::{CrdtManager, CrdtOperation};
+use nostr_crdt::nostr::crdt::{
+    CrdtManager, CrdtOperation, CrdtState, GCounter, GSet, GSetAction, LWWRegister,
+};
 use nostr_crdt::nostr::fetch;
 use nostr_indexeddb::nostr::nips::nip19::ToBech32;
 use nostr_sdk::{Client, ClientBuilder, EventBuilder, Keys, Kind, SecretKey, Tag};
 use std::sync::Arc;
 use std::time::Duration;
-use wasm_bindgen_futures::spawn_local;
-
-/// Demonstrates the correct way to encrypt and decrypt messages with NIP-04
-async fn encryption_decryption_example(
-    client: &Client,
-    my_keys: &Keys,
-) -> Result<(), Box<dyn std::error::Error>> {
-    println!("\n演示 NIP-04 加密和解密:");
-
-    // 获取我们自己的密钥
-    let my_signer = client.signer().await?;
-    let my_pubkey = my_signer.public_key().await?;
-
-    // 模拟另一个用户（在实际使用中，这可能是其他人的公钥）
-    let recipient_secret_key = SecretKey::generate();
-    let recipient_keys = Keys::new(recipient_secret_key);
-    let recipient_client = Client::new(&recipient_keys);
-    recipient_client.add_relay("wss://relay.damus.io").await?;
-    recipient_client.connect().await;
-
-    let recipient_signer = recipient_client.signer().await?;
-    let recipient_pubkey = recipient_signer.public_key().await?;
-
-    println!("我的公钥: {}", my_pubkey.to_bech32()?);
-    println!("接收者公钥: {}", recipient_pubkey.to_bech32()?);
-
-    // 1. 发送加密消息
-    // 重要：使用接收者的公钥加密
-    let encrypted_content = my_signer
-        .nip04_encrypt(recipient_pubkey, "秘密消息")
-        .await?;
-
-    // 创建加密的直接消息事件
-    let tags = vec![Tag::public_key(recipient_pubkey)];
-    let event = EventBuilder::new(Kind::EncryptedDirectMessage, &encrypted_content, tags)
-        .to_event(my_keys)?;
-
-    // 发送事件
-    client.send_event(event.clone()).await?;
-    println!("已发送加密消息: {}", event.id);
-
-    // 等待确保消息已传输
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    // 2. 接收者解密消息
-    // 重要：接收者使用发送者的公钥（而不是自己的公钥）来解密
-    let decrypted_content = recipient_signer
-        .nip04_decrypt(event.pubkey, &event.content)
-        .await?;
-    println!("接收者解密后的内容: {}", decrypted_content);
-
-    // 3. 回复消息
-    let reply_content = recipient_signer
-        .nip04_encrypt(my_pubkey, "回复消息")
-        .await?;
-
-    let tags = vec![Tag::public_key(my_pubkey)];
-    let reply_event = EventBuilder::new(Kind::EncryptedDirectMessage, &reply_content, tags)
-        .to_event(&recipient_keys)?;
-
-    recipient_client.send_event(reply_event.clone()).await?;
-    println!("接收者已回复加密消息: {}", reply_event.id);
-
-    // 等待确保消息已传输
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    // 4. 我解密回复消息
-    // 重要：使用发送者（接收者）的公钥进行解密
-    let decrypted_reply = my_signer
-        .nip04_decrypt(recipient_pubkey, &reply_event.content)
-        .await?;
-    println!("我解密后的回复内容: {}", decrypted_reply);
-
-    Ok(())
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -106,9 +33,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 等待连接确认
     tokio::time::sleep(Duration::from_secs(2)).await;
-
-    // 运行加密解密示例
-    encryption_decryption_example(&client, &keys).await?;
 
     // 获取签名器
     let signer = client.signer().await?;
@@ -237,6 +161,177 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\nCRDT演示完成");
+
+    // CRDT合并测试 - 模拟不同顺序接收操作后的最终一致性
+    println!("\n===== CRDT合并测试 =====");
+
+    println!("1. LWW-Register合并测试 (最后写入者获胜):");
+
+    // 创建一个模拟的CRDT管理器，只做本地测试
+    let mut lww_register = LWWRegister::default();
+
+    // 较早的操作
+    let op_a = CrdtOperation::LWWRegister {
+        key: "test_key".to_string(),
+        value: "值A".to_string(),
+        timestamp: 100,
+    };
+
+    // 较晚的操作
+    let op_b = CrdtOperation::LWWRegister {
+        key: "test_key".to_string(),
+        value: "值B".to_string(),
+        timestamp: 200,
+    };
+
+    // 模拟设备1: 先应用A后应用B
+    println!("  设备1: 先应用A(时间戳100)，后应用B(时间戳200)");
+    let mut device1 = LWWRegister::default();
+    device1.apply_operation(op_a.clone()).unwrap();
+    println!("    应用A后值: {:?}", device1.get_value("test_key"));
+    device1.apply_operation(op_b.clone()).unwrap();
+    println!("    应用B后值: {:?}", device1.get_value("test_key"));
+
+    // 模拟设备2: 先应用B后应用A
+    println!("  设备2: 先应用B(时间戳200)，后应用A(时间戳100)");
+    let mut device2 = LWWRegister::default();
+    device2.apply_operation(op_b.clone()).unwrap();
+    println!("    应用B后值: {:?}", device2.get_value("test_key"));
+    device2.apply_operation(op_a.clone()).unwrap();
+    println!("    应用A后值: {:?}", device2.get_value("test_key"));
+
+    // 验证最终状态一致
+    println!(
+        "  最终结果: 设备1={:?}, 设备2={:?}",
+        device1.get_value("test_key"),
+        device2.get_value("test_key")
+    );
+    println!(
+        "  合并成功: {}",
+        device1.get_value("test_key") == device2.get_value("test_key")
+    );
+
+    // G-Counter合并测试
+    println!("\n2. G-Counter合并测试 (只增计数器):");
+
+    // 模拟设备1: 先+3后+2
+    println!("  设备1: 先+3后+2");
+    let mut counter1 = GCounter::default();
+    counter1
+        .apply_operation(CrdtOperation::GCounter {
+            key: "test_counter".to_string(),
+            increment: 3,
+        })
+        .unwrap();
+    println!("    +3后计数: {:?}", counter1.get_value("test_counter"));
+
+    counter1
+        .apply_operation(CrdtOperation::GCounter {
+            key: "test_counter".to_string(),
+            increment: 2,
+        })
+        .unwrap();
+    println!("    +2后计数: {:?}", counter1.get_value("test_counter"));
+
+    // 模拟设备2: 先+2后+3
+    println!("  设备2: 先+2后+3");
+    let mut counter2 = GCounter::default();
+    counter2
+        .apply_operation(CrdtOperation::GCounter {
+            key: "test_counter".to_string(),
+            increment: 2,
+        })
+        .unwrap();
+    println!("    +2后计数: {:?}", counter2.get_value("test_counter"));
+
+    counter2
+        .apply_operation(CrdtOperation::GCounter {
+            key: "test_counter".to_string(),
+            increment: 3,
+        })
+        .unwrap();
+    println!("    +3后计数: {:?}", counter2.get_value("test_counter"));
+
+    // 验证最终计数相同
+    println!(
+        "  最终结果: 设备1={:?}, 设备2={:?}",
+        counter1.get_value("test_counter"),
+        counter2.get_value("test_counter")
+    );
+    println!(
+        "  合并成功: {}",
+        counter1.get_value("test_counter") == counter2.get_value("test_counter")
+    );
+
+    // G-Set合并测试
+    println!("\n3. G-Set合并测试 (只增集合):");
+
+    // 模拟设备1: 添加 A、B、C
+    println!("  设备1: 添加顺序 A->B->C");
+    let mut set1 = GSet::default();
+    set1.apply_operation(CrdtOperation::GSet {
+        key: "test_set".to_string(),
+        value: "A".to_string(),
+        action: GSetAction::Add,
+    })
+    .unwrap();
+    println!("    添加A后: {:?}", set1.get_value("test_set"));
+
+    set1.apply_operation(CrdtOperation::GSet {
+        key: "test_set".to_string(),
+        value: "B".to_string(),
+        action: GSetAction::Add,
+    })
+    .unwrap();
+    println!("    添加B后: {:?}", set1.get_value("test_set"));
+
+    set1.apply_operation(CrdtOperation::GSet {
+        key: "test_set".to_string(),
+        value: "C".to_string(),
+        action: GSetAction::Add,
+    })
+    .unwrap();
+    println!("    添加C后: {:?}", set1.get_value("test_set"));
+
+    // 模拟设备2: 添加 C、A、B (不同顺序)
+    println!("  设备2: 添加顺序 C->A->B");
+    let mut set2 = GSet::default();
+    set2.apply_operation(CrdtOperation::GSet {
+        key: "test_set".to_string(),
+        value: "C".to_string(),
+        action: GSetAction::Add,
+    })
+    .unwrap();
+    println!("    添加C后: {:?}", set2.get_value("test_set"));
+
+    set2.apply_operation(CrdtOperation::GSet {
+        key: "test_set".to_string(),
+        value: "A".to_string(),
+        action: GSetAction::Add,
+    })
+    .unwrap();
+    println!("    添加A后: {:?}", set2.get_value("test_set"));
+
+    set2.apply_operation(CrdtOperation::GSet {
+        key: "test_set".to_string(),
+        value: "B".to_string(),
+        action: GSetAction::Add,
+    })
+    .unwrap();
+    println!("    添加B后: {:?}", set2.get_value("test_set"));
+
+    // 验证最终集合相同
+    println!(
+        "  最终结果: 设备1={:?}, 设备2={:?}",
+        set1.get_value("test_set"),
+        set2.get_value("test_set")
+    );
+    println!(
+        "  合并成功: {}",
+        set1.get_value("test_set") == set2.get_value("test_set")
+    );
+
+    println!("\nCRDT合并测试完成 - 展示了无论操作顺序如何，最终状态都会收敛到相同结果");
 
     // 断开连接
     client.disconnect().await?;
