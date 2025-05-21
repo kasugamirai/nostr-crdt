@@ -166,7 +166,7 @@ impl CrdtManager {
             lww_registers: Arc::new(Mutex::new(LWWRegister::default())),
             g_counters: Arc::new(Mutex::new(GCounter::default())),
             g_sets: Arc::new(Mutex::new(GSet::default())),
-            crdt_kind: Kind::TextNote, // 使用标准的TextNote Kind而不是自定义Kind
+            crdt_kind: Kind::TextNote, // Use standard TextNote Kind instead of custom Kind
         }
     }
 
@@ -177,7 +177,7 @@ impl CrdtManager {
         }
 
         let content = if event.content.contains("?iv=") {
-            // 需要解密的内容
+            // Content that needs decryption
             match self
                 .signer
                 .nip04_decrypt(event.pubkey, &event.content)
@@ -202,28 +202,28 @@ impl CrdtManager {
         }
     }
 
-    // 使用加密发布CRDT操作
+    // Publish CRDT operation with encryption
     async fn publish_encrypted_crdt_operation(
         &self,
         op: &CrdtOperation,
         tags: Vec<Tag>,
     ) -> Result<EventId> {
-        // 序列化操作
+        // Serialize operation
         let content = serde_json::to_string(&op).map_err(|_| Error::SerializationError)?;
 
-        // 获取自己的公钥并加密内容
+        // Get own public key and encrypt content
         let my_pubkey = self.signer.public_key().await?;
         let encrypted_content = self.signer.nip04_encrypt(my_pubkey, &content).await?;
 
-        // 创建事件 - 添加CRDT专用标记
+        // Create event - add CRDT specific tags
         let mut all_tags = tags;
-        // 添加hashtag标记，用于区分CRDT操作
+        // Add hashtag for CRDT operation identification
         all_tags.push(Tag::hashtag("nostr-crdt"));
 
         let event =
             EventBuilder::new(self.crdt_kind, &encrypted_content, all_tags).to_event(&self.keys)?;
 
-        // 发送事件，添加重试逻辑
+        // Send event with retry logic
         let mut retry_count = 0;
         let max_retries = 3;
         let mut last_error = None;
@@ -237,14 +237,14 @@ impl CrdtManager {
                     last_error = Some(err);
                     retry_count += 1;
                     if retry_count < max_retries {
-                        // 等待一段时间后重试
+                        // Wait before retrying
                         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                     }
                 }
             }
         }
 
-        // 所有重试都失败
+        // All retries failed
         Err(Error::Client(last_error.unwrap()))
     }
 
@@ -319,10 +319,10 @@ impl CrdtManager {
 
     // Create a filter to subscribe to CRDT events
     pub fn get_filter(&self) -> nostr_sdk::Filter {
-        // 更新过滤器以包含应用特定标签
+        // Update filter to include application-specific tags
         nostr_sdk::Filter::new()
             .kind(self.crdt_kind)
-            .hashtag("nostr-crdt") // 使用hashtag作为替代方案
+            .hashtag("nostr-crdt") // Use hashtag as alternative
     }
 }
 

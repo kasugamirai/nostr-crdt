@@ -1,9 +1,8 @@
 use nostr_crdt::nostr::crdt::{
     CrdtManager, CrdtOperation, CrdtState, GCounter, GSet, GSetAction, LWWRegister,
 };
-use nostr_crdt::nostr::fetch;
 use nostr_indexeddb::nostr::nips::nip19::ToBech32;
-use nostr_sdk::{Client, ClientBuilder, EventBuilder, Keys, Kind, SecretKey, Tag};
+use nostr_sdk::{Client, Keys, SecretKey};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -11,118 +10,118 @@ use std::time::Duration;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("CRDT Demo using Nostr");
 
-    // 生成一个新的私钥，或者使用现有的私钥
+    // Generate a new private key, or use an existing one
     let secret_key = SecretKey::generate();
-    println!("使用私钥: {}", secret_key.to_bech32().unwrap());
+    println!("Using private key: {}", secret_key.to_bech32().unwrap());
 
     let keys = Keys::new(secret_key);
 
-    // 创建Nostr客户端
+    // Create Nostr client
     let client = Client::new(&keys);
 
-    // 添加一些中继服务器
+    // Add some relay servers
     client.add_relay("wss://relay.damus.io").await?;
     client.add_relay("wss://nos.lol").await?;
     client.add_relay("wss://nostr.wine").await?;
     client.add_relay("wss://relay.nostr.band").await?;
     client.add_relay("wss://relay.snort.social").await?;
 
-    // 连接到中继服务器
+    // Connect to relay servers
     client.connect().await;
-    println!("已连接到中继服务器");
+    println!("Connected to relay servers");
 
-    // 等待连接确认
+    // Wait for connection confirmation
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // 获取签名器
+    // Get signer
     let signer = client.signer().await?;
 
-    // 创建CRDT管理器
+    // Create CRDT manager
     let crdt_manager = CrdtManager::new(Arc::new(client.clone()), signer.clone(), keys.clone());
 
-    // 1. 演示LWW-Register
-    println!("\n演示 Last-Writer-Wins Register:");
+    // 1. Demonstrate LWW-Register
+    println!("\nDemonstrating Last-Writer-Wins Register:");
 
-    // 更新注册表
+    // Update register
     let event_id = crdt_manager
         .update_lww_register("username", "capybara")
         .await?;
-    println!("已发布用户名更新事件: {}", event_id);
+    println!("Published username update event: {}", event_id);
 
-    // 获取当前值
+    // Get current value
     let username = crdt_manager.get_register_value("username");
-    println!("当前用户名: {:?}", username);
+    println!("Current username: {:?}", username);
 
-    // 更新为新值
+    // Update to new value
     let event_id = crdt_manager
         .update_lww_register("username", "super_capybara")
         .await?;
-    println!("已发布新的用户名更新事件: {}", event_id);
+    println!("Published new username update event: {}", event_id);
 
-    // 获取更新后的值
+    // Get updated value
     let username = crdt_manager.get_register_value("username");
-    println!("更新后的用户名: {:?}", username);
+    println!("Updated username: {:?}", username);
 
-    // 2. 演示G-Counter
-    println!("\n演示 Grow-only Counter:");
+    // 2. Demonstrate G-Counter
+    println!("\nDemonstrating Grow-only Counter:");
 
-    // 增加计数器
+    // Increment counter
     let event_id = crdt_manager.increment_counter("visitors", 1).await?;
-    println!("已发布访问者计数增加事件: {}", event_id);
+    println!("Published visitor count increment event: {}", event_id);
 
-    // 再次增加计数器
+    // Increment counter again
     let event_id = crdt_manager.increment_counter("visitors", 5).await?;
-    println!("已发布访问者计数增加事件: {}", event_id);
+    println!("Published visitor count increment event: {}", event_id);
 
-    // 获取当前计数
+    // Get current count
     let visitors = crdt_manager.get_counter_value("visitors");
-    println!("当前访问者数量: {:?}", visitors);
+    println!("Current visitor count: {:?}", visitors);
 
-    // 3. 演示G-Set
-    println!("\n演示 Grow-only Set:");
+    // 3. Demonstrate G-Set
+    println!("\nDemonstrating Grow-only Set:");
 
-    // 添加到集合
+    // Add to set
     let event_id = crdt_manager.add_to_set("tags", "nostr").await?;
-    println!("已发布标签添加事件: {}", event_id);
+    println!("Published tag addition event: {}", event_id);
 
-    // 添加更多到集合
+    // Add more to set
     let event_id = crdt_manager.add_to_set("tags", "crdt").await?;
-    println!("已发布标签添加事件: {}", event_id);
+    println!("Published tag addition event: {}", event_id);
 
     let event_id = crdt_manager.add_to_set("tags", "distributed").await?;
-    println!("已发布标签添加事件: {}", event_id);
+    println!("Published tag addition event: {}", event_id);
 
-    // 获取当前集合
+    // Get current set
     let tags = crdt_manager.get_set_value("tags");
-    println!("当前标签集合: {:?}", tags);
+    println!("Current tag set: {:?}", tags);
 
-    // 等待一段时间以确保事件已传播
-    println!("\n等待事件传播...");
+    // Wait for a while to ensure events have propagated
+    println!("\nWaiting for event propagation...");
     tokio::time::sleep(Duration::from_secs(5)).await;
 
-    // 创建一个过滤器来获取CRDT事件
+    // Create a filter to get CRDT events
     let filter = crdt_manager.get_filter();
 
-    // 从网络获取事件
-    println!("\n从网络获取CRDT事件:");
+    // Fetch events from network
+    println!("\nFetching CRDT events from network:");
 
-    // 添加错误处理
+    // Add error handling
     let events = match client
         .get_events_of(vec![filter], Some(Duration::from_secs(10)))
         .await
     {
         Ok(events) => events,
         Err(err) => {
-            println!("获取事件时出错: {}", err);
-            Vec::new() // 返回空数组而不是报错
+            println!("Error fetching events: {}", err);
+            Vec::new() // Return empty array instead of error
         }
     };
 
-    println!("发现 {} 个CRDT事件", events.len());
+    println!("Found {} CRDT events", events.len());
     for (i, event) in events.iter().enumerate() {
-        println!("事件 {}: ID: {}", i + 1, event.id);
+        println!("Event {}: ID: {}", i + 1, event.id);
 
-        // 检查是否包含hashtag标记
+        // Check if it contains hashtag marker
         let is_crdt_event = event.tags.iter().any(|tag| {
             if let Some(values) = tag.as_vec().get(0..2) {
                 return values.len() == 2 && values[0] == "t" && values[1] == "nostr-crdt";
@@ -131,21 +130,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
 
         if !is_crdt_event {
-            println!("不是CRDT事件，跳过");
+            println!("Not a CRDT event, skipping");
             continue;
         }
 
-        // 检查内容是否需要解密
+        // Check if content needs decryption
         let content = if event.content.contains("?iv=") {
-            println!("内容已加密，尝试解密...");
-            // 重要：使用发送者的公钥（event.pubkey）解密
+            println!("Content is encrypted, attempting to decrypt...");
+            // Important: Use sender's public key (event.pubkey) for decryption
             match signer.nip04_decrypt(event.pubkey, &event.content).await {
                 Ok(decrypted) => {
-                    println!("解密成功");
+                    println!("Decryption successful");
                     decrypted
                 }
                 Err(err) => {
-                    println!("解密失败: {}", err);
+                    println!("Decryption failed: {}", err);
                     event.content.clone()
                 }
             }
@@ -153,69 +152,81 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             event.content.clone()
         };
 
-        println!("事件内容: {}", content);
+        println!("Event content: {}", content);
         match serde_json::from_str::<CrdtOperation>(&content) {
-            Ok(op) => println!("操作: {:?}", op),
-            Err(err) => println!("无法解析操作: {}", err),
+            Ok(op) => println!("Operation: {:?}", op),
+            Err(err) => println!("Could not parse operation: {}", err),
         }
     }
 
-    println!("\nCRDT演示完成");
+    println!("\nCRDT demonstration completed");
 
-    // CRDT合并测试 - 模拟不同顺序接收操作后的最终一致性
-    println!("\n===== CRDT合并测试 =====");
+    // CRDT merge test - Simulate eventual consistency after receiving operations in different orders
+    println!("\n===== CRDT Merge Test =====");
 
-    println!("1. LWW-Register合并测试 (最后写入者获胜):");
+    println!("1. LWW-Register merge test (last writer wins):");
 
-    // 创建一个模拟的CRDT管理器，只做本地测试
+    // Create a simulated CRDT manager, for local testing only
     let mut lww_register = LWWRegister::default();
 
-    // 较早的操作
+    // Earlier operation
     let op_a = CrdtOperation::LWWRegister {
         key: "test_key".to_string(),
-        value: "值A".to_string(),
+        value: "Value A".to_string(),
         timestamp: 100,
     };
 
-    // 较晚的操作
+    // Later operation
     let op_b = CrdtOperation::LWWRegister {
         key: "test_key".to_string(),
-        value: "值B".to_string(),
+        value: "Value B".to_string(),
         timestamp: 200,
     };
 
-    // 模拟设备1: 先应用A后应用B
-    println!("  设备1: 先应用A(时间戳100)，后应用B(时间戳200)");
+    // Simulate Device 1: Apply A then B
+    println!("  Device 1: Apply A (timestamp 100) then B (timestamp 200)");
     let mut device1 = LWWRegister::default();
     device1.apply_operation(op_a.clone()).unwrap();
-    println!("    应用A后值: {:?}", device1.get_value("test_key"));
+    println!(
+        "    Value after applying A: {:?}",
+        device1.get_value("test_key")
+    );
     device1.apply_operation(op_b.clone()).unwrap();
-    println!("    应用B后值: {:?}", device1.get_value("test_key"));
+    println!(
+        "    Value after applying B: {:?}",
+        device1.get_value("test_key")
+    );
 
-    // 模拟设备2: 先应用B后应用A
-    println!("  设备2: 先应用B(时间戳200)，后应用A(时间戳100)");
+    // Simulate Device 2: Apply B then A
+    println!("  Device 2: Apply B (timestamp 200) then A (timestamp 100)");
     let mut device2 = LWWRegister::default();
     device2.apply_operation(op_b.clone()).unwrap();
-    println!("    应用B后值: {:?}", device2.get_value("test_key"));
-    device2.apply_operation(op_a.clone()).unwrap();
-    println!("    应用A后值: {:?}", device2.get_value("test_key"));
-
-    // 验证最终状态一致
     println!(
-        "  最终结果: 设备1={:?}, 设备2={:?}",
+        "    Value after applying B: {:?}",
+        device2.get_value("test_key")
+    );
+    device2.apply_operation(op_a.clone()).unwrap();
+    println!(
+        "    Value after applying A: {:?}",
+        device2.get_value("test_key")
+    );
+
+    // Verify final state is consistent
+    println!(
+        "  Final result: Device 1={:?}, Device 2={:?}",
         device1.get_value("test_key"),
         device2.get_value("test_key")
     );
     println!(
-        "  合并成功: {}",
+        "  Merge successful: {}",
         device1.get_value("test_key") == device2.get_value("test_key")
     );
 
-    // G-Counter合并测试
-    println!("\n2. G-Counter合并测试 (只增计数器):");
+    // G-Counter merge test
+    println!("\n2. G-Counter merge test (grow-only counter):");
 
-    // 模拟设备1: 先+3后+2
-    println!("  设备1: 先+3后+2");
+    // Simulate Device 1: First +3 then +2
+    println!("  Device 1: First +3 then +2");
     let mut counter1 = GCounter::default();
     counter1
         .apply_operation(CrdtOperation::GCounter {
@@ -223,7 +234,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             increment: 3,
         })
         .unwrap();
-    println!("    +3后计数: {:?}", counter1.get_value("test_counter"));
+    println!(
+        "    Count after +3: {:?}",
+        counter1.get_value("test_counter")
+    );
 
     counter1
         .apply_operation(CrdtOperation::GCounter {
@@ -231,10 +245,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             increment: 2,
         })
         .unwrap();
-    println!("    +2后计数: {:?}", counter1.get_value("test_counter"));
+    println!(
+        "    Count after +2: {:?}",
+        counter1.get_value("test_counter")
+    );
 
-    // 模拟设备2: 先+2后+3
-    println!("  设备2: 先+2后+3");
+    // Simulate Device 2: First +2 then +3
+    println!("  Device 2: First +2 then +3");
     let mut counter2 = GCounter::default();
     counter2
         .apply_operation(CrdtOperation::GCounter {
@@ -242,7 +259,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             increment: 2,
         })
         .unwrap();
-    println!("    +2后计数: {:?}", counter2.get_value("test_counter"));
+    println!(
+        "    Count after +2: {:?}",
+        counter2.get_value("test_counter")
+    );
 
     counter2
         .apply_operation(CrdtOperation::GCounter {
@@ -250,24 +270,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             increment: 3,
         })
         .unwrap();
-    println!("    +3后计数: {:?}", counter2.get_value("test_counter"));
-
-    // 验证最终计数相同
     println!(
-        "  最终结果: 设备1={:?}, 设备2={:?}",
+        "    Count after +3: {:?}",
+        counter2.get_value("test_counter")
+    );
+
+    // Verify final count is the same
+    println!(
+        "  Final result: Device 1={:?}, Device 2={:?}",
         counter1.get_value("test_counter"),
         counter2.get_value("test_counter")
     );
     println!(
-        "  合并成功: {}",
+        "  Merge successful: {}",
         counter1.get_value("test_counter") == counter2.get_value("test_counter")
     );
 
-    // G-Set合并测试
-    println!("\n3. G-Set合并测试 (只增集合):");
+    // G-Set merge test
+    println!("\n3. G-Set merge test (grow-only set):");
 
-    // 模拟设备1: 添加 A、B、C
-    println!("  设备1: 添加顺序 A->B->C");
+    // Simulate Device 1: Add A, B, C
+    println!("  Device 1: Addition order A->B->C");
     let mut set1 = GSet::default();
     set1.apply_operation(CrdtOperation::GSet {
         key: "test_set".to_string(),
@@ -275,7 +298,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         action: GSetAction::Add,
     })
     .unwrap();
-    println!("    添加A后: {:?}", set1.get_value("test_set"));
+    println!("    After adding A: {:?}", set1.get_value("test_set"));
 
     set1.apply_operation(CrdtOperation::GSet {
         key: "test_set".to_string(),
@@ -283,7 +306,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         action: GSetAction::Add,
     })
     .unwrap();
-    println!("    添加B后: {:?}", set1.get_value("test_set"));
+    println!("    After adding B: {:?}", set1.get_value("test_set"));
 
     set1.apply_operation(CrdtOperation::GSet {
         key: "test_set".to_string(),
@@ -291,10 +314,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         action: GSetAction::Add,
     })
     .unwrap();
-    println!("    添加C后: {:?}", set1.get_value("test_set"));
+    println!("    After adding C: {:?}", set1.get_value("test_set"));
 
-    // 模拟设备2: 添加 C、A、B (不同顺序)
-    println!("  设备2: 添加顺序 C->A->B");
+    // Simulate Device 2: Add C, A, B (different order)
+    println!("  Device 2: Addition order C->A->B");
     let mut set2 = GSet::default();
     set2.apply_operation(CrdtOperation::GSet {
         key: "test_set".to_string(),
@@ -302,7 +325,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         action: GSetAction::Add,
     })
     .unwrap();
-    println!("    添加C后: {:?}", set2.get_value("test_set"));
+    println!("    After adding C: {:?}", set2.get_value("test_set"));
 
     set2.apply_operation(CrdtOperation::GSet {
         key: "test_set".to_string(),
@@ -310,7 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         action: GSetAction::Add,
     })
     .unwrap();
-    println!("    添加A后: {:?}", set2.get_value("test_set"));
+    println!("    After adding A: {:?}", set2.get_value("test_set"));
 
     set2.apply_operation(CrdtOperation::GSet {
         key: "test_set".to_string(),
@@ -318,22 +341,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         action: GSetAction::Add,
     })
     .unwrap();
-    println!("    添加B后: {:?}", set2.get_value("test_set"));
+    println!("    After adding B: {:?}", set2.get_value("test_set"));
 
-    // 验证最终集合相同
+    // Verify final sets are the same
     println!(
-        "  最终结果: 设备1={:?}, 设备2={:?}",
+        "  Final result: Device 1={:?}, Device 2={:?}",
         set1.get_value("test_set"),
         set2.get_value("test_set")
     );
     println!(
-        "  合并成功: {}",
+        "  Merge successful: {}",
         set1.get_value("test_set") == set2.get_value("test_set")
     );
 
-    println!("\nCRDT合并测试完成 - 展示了无论操作顺序如何，最终状态都会收敛到相同结果");
+    println!("\nCRDT merge test completed - Demonstrated that regardless of operation order, final state converges to the same result");
 
-    // 断开连接
+    // Disconnect
     client.disconnect().await?;
 
     Ok(())
